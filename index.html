@@ -32,6 +32,7 @@
   // Firebase SDK (loaded dynamically so app works even before setup)
   import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
   import { getFirestore, collection, addDoc, getDocs, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, where } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 
   // ── REPLACE THIS WITH YOUR FIREBASE CONFIG ──
 const firebaseConfig = {
@@ -48,10 +49,13 @@ const firebaseConfig = {
     try {
       const app = initializeApp(firebaseConfig);
       const db = getFirestore(app);
+      const auth = getAuth(app);
       window._db = db;
+      window._auth = auth;
       window._fbModules = { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, onSnapshot, query, orderBy, where };
+      window._authModules = { signInWithEmailAndPassword, signOut, onAuthStateChanged, sendPasswordResetEmail };
       window._firebaseReady = true;
-      console.log('✅ Firebase connected');
+      console.log('✅ Firebase + Auth connected');
     } catch(e) {
       console.warn('Firebase init failed:', e);
       window._firebaseReady = false;
@@ -94,49 +98,141 @@ html{overflow-x:hidden;}
 body{font-family:'DM Sans',sans-serif;background:var(--parchment);color:var(--ink);min-height:100vh;overflow-x:hidden;font-size:16px;}
 
 /* ── LOGIN SCREEN ── */
+/* ── LOGIN SCREEN ANIMATIONS ── */
+@keyframes loginOverlayIn {
+  from { opacity:0; backdrop-filter:blur(0px); }
+  to   { opacity:1; backdrop-filter:blur(20px); }
+}
+@keyframes loginCardIn {
+  0%   { opacity:0; transform:scale(0.88) translateY(24px); }
+  65%  { opacity:1; transform:scale(1.015) translateY(-4px); }
+  100% { opacity:1; transform:scale(1) translateY(0); }
+}
+@keyframes loginCardOut {
+  from { opacity:1; transform:scale(1) translateY(0); }
+  to   { opacity:0; transform:scale(0.92) translateY(16px); }
+}
+@keyframes staffBtnPulse {
+  0%   { box-shadow:0 0 0 0 rgba(201,168,76,0.5); }
+  70%  { box-shadow:0 0 0 10px rgba(201,168,76,0); }
+  100% { box-shadow:0 0 0 0 rgba(201,168,76,0); }
+}
 .login-screen{
-  display:none;position:fixed;inset:0;background:var(--ink);
+  display:none;position:fixed;inset:0;
+  background:rgba(8,8,8,0.72);
+  backdrop-filter:blur(0px);
   z-index:500;align-items:center;justify-content:center;flex-direction:column;
+  transition:none;
 }
-.login-screen.show{display:flex;}
+.login-screen::before{
+  content:'';position:absolute;inset:0;
+  background:radial-gradient(ellipse at 50% 20%,rgba(201,168,76,0.1) 0%,transparent 65%);
+  pointer-events:none;
+}
+.login-screen.show{
+  display:flex;
+  animation:loginOverlayIn 0.35s ease forwards;
+}
+.login-screen.show .login-box{
+  animation:loginCardIn 0.42s cubic-bezier(0.34,1.4,0.64,1) forwards;
+}
+.login-screen.hiding{
+  animation:loginOverlayIn 0.22s ease reverse forwards;
+}
+.login-screen.hiding .login-box{
+  animation:loginCardOut 0.22s ease forwards;
+}
 .login-box{
-  background:var(--ink-soft);border:1px solid rgba(201,168,76,0.25);
-  border-radius:20px;padding:48px 40px;width:100%;max-width:420px;
-  box-shadow:var(--shadow-lg);
-}
-.login-logo{text-align:center;margin-bottom:32px;}
+  background:rgba(20,18,15,0.65);
+  backdrop-filter:blur(32px) saturate(1.4);
+  -webkit-backdrop-filter:blur(32px) saturate(1.4);
+  border:1px solid rgba(201,168,76,0.22);
+  border-top:1px solid rgba(201,168,76,0.35);
+  border-radius:20px;padding:44px 40px 32px;width:100%;max-width:400px;
+  box-shadow:
+    0 32px 80px rgba(0,0,0,0.55),
+    0 0 0 1px rgba(255,255,255,0.03),
+    inset 0 1px 0 rgba(255,255,255,0.06);
+  position:relative;z-index:1;
+}.login-logo{text-align:center;margin-bottom:32px;}
 .login-logo .logo-icon{
   width:64px;height:64px;
   background:linear-gradient(135deg,var(--gold),var(--gold-dark));
   border-radius:16px;display:flex;align-items:center;justify-content:center;
   font-size:28px;margin:0 auto 14px;
 }
-.login-logo h2{font-family:'Cormorant Garamond',serif;color:var(--white);font-size:2rem;font-weight:500;}
-.login-logo p{color:var(--slate-light);font-size:0.78rem;margin-top:4px;letter-spacing:0.06em;text-transform:uppercase;font-family:'DM Mono',monospace;}
-.login-role-tabs{display:flex;gap:6px;margin-bottom:24px;background:rgba(255,255,255,0.05);padding:4px;border-radius:10px;}
-.login-role-tab{
-  flex:1;padding:8px;text-align:center;font-size:0.75rem;font-weight:600;
-  cursor:pointer;border-radius:7px;color:var(--slate-light);transition:all 0.2s;
-}
-.login-role-tab.active{background:var(--gold);color:var(--ink);}
-.login-field{margin-bottom:16px;}
-.login-field label{display:block;font-size:0.75rem;font-weight:500;color:var(--slate-light);margin-bottom:6px;letter-spacing:0.06em;text-transform:uppercase;}
+.login-logo h2{font-family:'Cormorant Garamond',serif;color:var(--white);font-size:1.85rem;font-weight:500;letter-spacing:0.01em;}
+.login-logo p{color:var(--slate-light);font-size:0.7rem;margin-top:6px;letter-spacing:0.14em;text-transform:uppercase;font-family:'DM Mono',monospace;opacity:0.7;}
+.login-field{margin-bottom:18px;}
+.login-field label{display:block;font-size:0.7rem;font-weight:600;color:var(--slate-light);margin-bottom:8px;letter-spacing:0.08em;text-transform:uppercase;}
 .login-field input{
-  width:100%;padding:13px 16px;background:#FAF7F2;
-  border:1.5px solid #E5E0D8;border-radius:8px;
-  color:#0D0D0D;font-family:'DM Sans',sans-serif;font-size:1rem;outline:none;
-  transition:border 0.2s,box-shadow 0.2s;
+  width:100%;padding:14px 16px;background:rgba(255,255,255,0.04);
+  border:1px solid rgba(255,255,255,0.08);border-radius:8px;
+  color:var(--white);font-family:'DM Sans',sans-serif;font-size:0.95rem;outline:none;
+  transition:all 0.2s;
 }
-.login-field input:focus{border-color:var(--gold);background:#FFFFFF;box-shadow:0 0 0 3px rgba(201,168,76,0.12);}
+.login-field input:focus{
+  border-color:var(--gold);background:rgba(255,255,255,0.07);
+  box-shadow:0 0 0 3px rgba(201,168,76,0.1);
+}
+.login-field input::placeholder{color:var(--slate-mid);}
 .login-btn{
-  width:100%;padding:15px;background:linear-gradient(135deg,var(--gold),var(--gold-dark));
-  border:none;border-radius:10px;font-family:'DM Sans',sans-serif;
-  font-size:1rem;font-weight:700;color:var(--ink);cursor:pointer;
-  margin-top:8px;transition:all 0.2s;letter-spacing:0.04em;
+  width:100%;padding:14px;background:linear-gradient(135deg,var(--gold),var(--gold-dark));
+  border:none;border-radius:8px;font-family:'DM Sans',sans-serif;
+  font-size:0.92rem;font-weight:700;color:var(--ink);cursor:pointer;
+  margin-top:10px;transition:all 0.25s;letter-spacing:0.04em;
 }
-.login-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(201,168,76,0.35);}
+.login-btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 8px 24px rgba(201,168,76,0.3);}
+.login-btn:disabled{opacity:0.6;cursor:not-allowed;}
 .login-hint{font-size:0.72rem;color:var(--slate-mid);text-align:center;margin-top:14px;line-height:1.5;}
-.login-error{color:#FC8181;font-size:0.78rem;text-align:center;margin-top:10px;display:none;}
+.login-error{
+  color:#FCA5A5;font-size:0.78rem;text-align:center;margin-top:12px;display:none;
+  padding:8px 12px;background:rgba(185,28,28,0.12);border:1px solid rgba(185,28,28,0.25);
+  border-radius:6px;
+}
+/* ── FORGOT PASSWORD POPUP ANIMATION ── */
+@keyframes popIn {
+  0%   { opacity:0; transform:scale(0.85) translateY(12px); }
+  60%  { opacity:1; transform:scale(1.02) translateY(-2px); }
+  100% { opacity:1; transform:scale(1) translateY(0); }
+}
+@keyframes fadeInBg {
+  from { opacity:0; backdrop-filter:blur(0px); }
+  to   { opacity:1; backdrop-filter:blur(16px); }
+}
+.forgot-popup-inner {
+  animation: popIn 0.35s cubic-bezier(0.34,1.56,0.64,1) forwards;
+}
+.forgot-popup-bg {
+  animation: fadeInBg 0.25s ease forwards;
+}
+#logout-popup {
+  animation: popIn 0.32s cubic-bezier(0.34,1.56,0.64,1) forwards;
+}
+.login-role-tabs{
+  display:grid;grid-template-columns:1fr 1fr;gap:8px;
+  margin-bottom:24px;
+}
+.login-role-tab{
+  padding:10px 8px;text-align:center;
+  cursor:pointer;border-radius:8px;
+  border:1px solid rgba(255,255,255,0.08);
+  background:rgba(255,255,255,0.03);
+  color:var(--slate-light);transition:all 0.2s;
+  display:flex;flex-direction:row;align-items:center;justify-content:center;gap:7px;
+}
+.login-role-tab:hover{
+  border-color:rgba(201,168,76,0.3);
+  background:rgba(201,168,76,0.05);
+  color:var(--white);
+}
+.login-role-tab.active{
+  background:rgba(201,168,76,0.1);
+  border:1.5px solid var(--gold);
+  color:var(--gold);
+}
+.login-role-tab .tab-icon{font-size:0.95rem;line-height:1;}
+.login-role-tab .tab-label{font-size:0.75rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;}
 
 /* ── NAV ── */
 .nav{
@@ -249,9 +345,9 @@ textarea{resize:vertical;min-height:90px;line-height:1.5;}
   gap:10px;
 }
 .chip{
-  padding:14px 10px;
-  border-radius:10px;
-  font-size:0.85rem;
+  padding:7px 8px;
+  border-radius:8px;
+  font-size:0.82rem;
   font-weight:600;
   cursor:pointer;
   border:1.5px solid #E5E0D8;
@@ -260,13 +356,13 @@ textarea{resize:vertical;min-height:90px;line-height:1.5;}
   transition:all 0.2s;
   user-select:none;
   text-align:center;
-  line-height:1.3;
+  line-height:1.2;
 
   display:flex;
   align-items:center;
   justify-content:center;
 
-  min-height:65px;
+  min-height:42px;
 
   white-space:normal;
   overflow-wrap:break-word;
@@ -276,18 +372,47 @@ textarea{resize:vertical;min-height:90px;line-height:1.5;}
 @media(max-width:480px){.issue-chips{grid-template-columns:repeat(2,1fr);}}
 .priority-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;}
 .priority-card{
-  padding:22px 10px;border-radius:14px;border:2px solid #E5E0D8;
-  cursor:pointer;text-align:center;transition:all 0.2s;
-  background:var(--white);position:relative;overflow:hidden;
+  padding:14px 10px 12px;border-radius:12px;
+  border:2px solid transparent;
+  cursor:pointer;text-align:center;transition:all 0.22s;
+  background:#F5F3EF;position:relative;overflow:hidden;
 }
-.priority-card:hover{border-color:var(--gold);transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,0.08);}
-.priority-card.selected{border-color:var(--gold);background:linear-gradient(135deg,rgba(201,168,76,0.1),rgba(201,168,76,0.05));box-shadow:0 6px 20px rgba(201,168,76,0.2);}
-.priority-card.selected-low{border-color:var(--green);background:var(--green-light);}
-.priority-card.selected-med{border-color:var(--amber);background:var(--amber-light);}
-.priority-card.selected-high{border-color:var(--red);background:var(--red-light);}
-.priority-card .p-icon{font-size:1.8rem;margin-bottom:8px;display:block;}
-.priority-card .p-label{font-size:1.05rem;font-weight:800;letter-spacing:0.02em;}
-.priority-card .p-desc{font-size:0.8rem;color:var(--slate-mid);margin-top:5px;font-weight:400;}
+.priority-card::before{ display:none; }
+.priority-card:hover{transform:translateY(-3px);box-shadow:0 10px 28px rgba(0,0,0,0.1);}
+.priority-card.low-card{background:#F0FAF5;border-color:#D1F0E0;}
+.priority-card.med-card{background:#FFF8EC;border-color:#FFE4A0;}
+.priority-card.high-card{background:#FFF1F1;border-color:#FFD0D0;}
+.priority-card.selected-low{background:linear-gradient(135deg,#2E7D5E,#34A876);border-color:#2E7D5E;box-shadow:0 8px 28px rgba(46,125,94,0.35);}
+.priority-card.selected-med{background:linear-gradient(135deg,#D97706,#F59E0B);border-color:#D97706;box-shadow:0 8px 28px rgba(217,119,6,0.35);}
+.priority-card.selected-high{background:linear-gradient(135deg,#B91C1C,#EF4444);border-color:#B91C1C;box-shadow:0 8px 28px rgba(185,28,28,0.35);}
+.priority-card .p-dot{
+  width:32px;height:32px;border-radius:50%;margin:0 auto 10px;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,0.08);transition:all 0.22s;
+}
+.priority-card.selected-low .p-dot,
+.priority-card.selected-med .p-dot,
+.priority-card.selected-high .p-dot{ background:rgba(255,255,255,0.25); }
+.priority-card.low-card .p-dot{background:rgba(46,125,94,0.12);}
+.priority-card.med-card .p-dot{background:rgba(217,119,6,0.12);}
+.priority-card.high-card .p-dot{background:rgba(185,28,28,0.12);}
+.priority-card .p-dot::after{
+  content:'';width:12px;height:12px;border-radius:50%;display:block;
+}
+.priority-card.low-card .p-dot::after{background:#2E7D5E;}
+.priority-card.med-card .p-dot::after{background:#D97706;}
+.priority-card.high-card .p-dot::after{background:#B91C1C;}
+.priority-card.selected-low .p-dot::after,
+.priority-card.selected-med .p-dot::after,
+.priority-card.selected-high .p-dot::after{background:rgba(255,255,255,0.9);}
+.priority-card .p-label{font-size:0.88rem;font-weight:800;letter-spacing:0.02em;color:var(--ink);transition:color 0.22s;}
+.priority-card .p-desc{font-size:0.7rem;color:var(--slate-mid);margin-top:3px;font-weight:400;transition:color 0.22s;}
+.priority-card.selected-low .p-label,
+.priority-card.selected-med .p-label,
+.priority-card.selected-high .p-label{color:#fff;}
+.priority-card.selected-low .p-desc,
+.priority-card.selected-med .p-desc,
+.priority-card.selected-high .p-desc{color:rgba(255,255,255,0.75);}
 .submit-btn{
   width:100%;padding:17px;
   background:linear-gradient(135deg,var(--gold),var(--gold-dark));
@@ -567,29 +692,68 @@ textarea{resize:vertical;min-height:90px;line-height:1.5;}
   STAFF LOGIN SCREEN (Company & Service Team only)
   Public users → go straight to SR form, no login
 ═══════════════════════════════════════════════ -->
-<div class="login-screen" id="login-screen">
+<div class="login-screen" id="login-screen" onclick="if(event.target===this)closeStaffLogin()">
   <div class="login-box">
     <div class="login-logo">
-      <img src="https://raw.githubusercontent.com/amalsajeeth-tech/logo-host/main/5f8f36c3-dc06-4694-82d9-459326f26914_thumb.jpg" style="height:70px;object-fit:contain;margin-bottom:4px;">
+      <img src="https://raw.githubusercontent.com/amalsajeeth-tech/logo-host/main/5f8f36c3-dc06-4694-82d9-459326f26914_thumb.jpg" style="height:64px;object-fit:contain;margin-bottom:10px;">
       <h2>Msheireb Properties</h2>
-      <p>Staff Portal Access</p>
-    </div>
-    <div class="login-role-tabs" id="role-tabs">
-      <div class="login-role-tab active" onclick="selectRole('company')">🏢 Company</div>
-      <div class="login-role-tab" onclick="selectRole('service')">🔧 Service Team</div>
-    </div>
-    <div id="login-fields"></div>
-    <button class="login-btn" onclick="doLogin()" id="login-btn">Access Portal</button>
-    <div class="login-error" id="login-error">Incorrect credentials. Please try again.</div>
-    <button onclick="closeStaffLogin()" style="width:100%;margin-top:10px;padding:11px;background:transparent;border:1px solid rgba(255,255,255,0.15);border-radius:10px;color:var(--slate-light);font-family:'DM Sans',sans-serif;font-size:0.85rem;cursor:pointer;transition:all 0.2s;">← Back to Form</button>
-    <div style="margin-top:16px;padding:14px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:10px;font-size:0.78rem;line-height:1.8;color:var(--slate-light);">
-      <div style="color:var(--gold);font-weight:700;margin-bottom:6px;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;">Test Credentials</div>
-      🏢 <strong style="color:var(--white);">Company</strong><br>
-      admin@msheireb.com / msheireb2025<br><br>
-      🔧 <strong style="color:var(--white);">Service Team</strong><br>
-      tech@service.com / service2026
+      <p>Staff Portal · Secure Access</p>
     </div>
 
+    <div class="login-role-tabs" id="role-tabs">
+      <div class="login-role-tab active" onclick="selectRole('company')">
+        <span class="tab-icon">🏢</span>
+        <span class="tab-label">MP Admin</span>
+      </div>
+      <div class="login-role-tab" onclick="selectRole('service')">
+        <span class="tab-icon">🔧</span>
+        <span class="tab-label">Service Team</span>
+      </div>
+    </div>
+
+    <div class="login-field">
+      <label>Work Email</label>
+      <input type="email" id="login-email" placeholder="" autocomplete="username" autofocus>
+    </div>
+    <div class="login-field">
+      <label>Password</label>
+      <input type="password" id="login-pass" placeholder="" autocomplete="current-password">
+    </div>
+
+    <button class="login-btn" onclick="doLogin()" id="login-btn">Sign In</button>
+    <div class="login-error" id="login-error"></div>
+
+    <div style="text-align:center;margin-top:14px;">
+      <a onclick="showForgotPassword()" style="color:var(--gold);font-size:0.78rem;cursor:pointer;font-weight:500;">Forgot your password?</a>
+    </div>
+
+    <!-- Forgot Password Popup -->
+    <div id="forgot-popup" style="display:none;position:absolute;inset:0;border-radius:16px;z-index:10;align-items:center;justify-content:center;" class="forgot-popup-bg">
+      <div class="forgot-popup-inner" style="background:linear-gradient(160deg,rgba(35,32,28,0.98),rgba(22,20,18,0.98));border:1px solid rgba(201,168,76,0.22);border-radius:14px;padding:36px 32px 28px;width:88%;max-width:310px;box-shadow:0 32px 80px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.03);backdrop-filter:blur(20px);">
+        <div style="text-align:center;margin-bottom:24px;">
+          <div style="width:44px;height:44px;background:linear-gradient(135deg,var(--gold),var(--gold-dark));border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;margin:0 auto 16px;">🔑</div>
+          <div style="font-family:'Cormorant Garamond',serif;font-size:1.4rem;color:var(--white);font-weight:500;letter-spacing:0.01em;">Reset Password</div>
+          <div style="font-size:0.75rem;color:var(--slate-mid);margin-top:8px;line-height:1.6;letter-spacing:0.01em;">Enter your registered work email and<br>we'll send you a secure reset link.</div>
+        </div>
+        <div style="margin-bottom:16px;">
+          <div style="font-size:0.68rem;font-weight:600;color:var(--slate-light);margin-bottom:7px;letter-spacing:0.1em;text-transform:uppercase;">Work Email</div>
+          <input type="email" id="forgot-email" placeholder="" autocomplete="email" style="width:100%;padding:12px 14px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:var(--white);font-family:'DM Sans',sans-serif;font-size:0.9rem;outline:none;transition:all 0.2s;" onfocus="this.style.borderColor='var(--gold)';this.style.background='rgba(255,255,255,0.07)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)';this.style.background='rgba(255,255,255,0.04)'">
+        </div>
+        <div id="forgot-msg" style="font-size:0.74rem;text-align:center;margin-bottom:14px;display:none;padding:8px 10px;border-radius:6px;"></div>
+        <button onclick="submitForgotPassword()" style="width:100%;padding:12px;background:linear-gradient(135deg,var(--gold),var(--gold-dark));border:none;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:0.85rem;font-weight:700;color:var(--ink);cursor:pointer;letter-spacing:0.05em;margin-bottom:8px;transition:all 0.2s;">Send Reset Link</button>
+        <button onclick="hideForgotPassword()" style="width:100%;padding:10px;background:transparent;border:1px solid rgba(255,255,255,0.07);border-radius:8px;font-family:'DM Sans',sans-serif;font-size:0.8rem;color:var(--slate-mid);cursor:pointer;letter-spacing:0.03em;transition:all 0.2s;">Cancel</button>
+      </div>
+    </div>
+
+    <div style="margin-top:24px;padding-top:18px;border-top:1px solid rgba(255,255,255,0.08);">
+      <button onclick="closeStaffLogin()" style="width:100%;padding:11px;background:transparent;border:none;color:var(--slate-light);font-family:'DM Sans',sans-serif;font-size:0.82rem;cursor:pointer;transition:all 0.18s;letter-spacing:0.02em;" onmouseover="this.style.color='var(--white)';this.style.transform='translateY(-1px)'" onmouseout="this.style.color='var(--slate-light)';this.style.transform='none'" onmousedown="this.style.transform='scale(0.97)'" onmouseup="this.style.transform='translateY(-1px)'">← Return to public form</button>
+    </div>
+
+    <div style="margin-top:18px;text-align:center;">
+      <div style="font-size:0.68rem;color:var(--slate-mid);letter-spacing:0.06em;font-family:'DM Mono',monospace;">
+        Msheireb Properties Golf Cart Service · 2026
+      </div>
+    </div>
   </div>
 </div>
 
@@ -613,7 +777,7 @@ textarea{resize:vertical;min-height:90px;line-height:1.5;}
     <div class="nav-user-pill" id="staff-login-btn" onclick="showStaffLogin()" style="background:rgba(201,168,76,0.12);border:1px solid rgba(201,168,76,0.3);color:var(--gold);font-weight:600;font-size:0.78rem;">
       🔐 Staff Login
     </div>
-    <div class="nav-user-pill" id="nav-user-pill" onclick="logout()" style="display:none;">
+    <div class="nav-user-pill" id="nav-user-pill" onclick="showLogoutConfirm()" style="display:none;">
       <div class="nav-user-avatar" id="nav-avatar">?</div>
       <span id="nav-username">Staff</span>
       &nbsp;· Sign out
@@ -654,14 +818,11 @@ textarea{resize:vertical;min-height:90px;line-height:1.5;}
           <div class="issue-chips" id="issue-chips">
             <div class="chip" onclick="toggleChip(this)">🔋 Battery / Charging</div>
             <div class="chip" onclick="toggleChip(this)">🛞 Tyre / Wheel</div>
-            <div class="chip" onclick="toggleChip(this)">⚙️ Motor / Drive</div>
             <div class="chip" onclick="toggleChip(this)">🛑 Brakes</div>
             <div class="chip" onclick="toggleChip(this)">💡 Lights / Electrical</div>
             <div class="chip" onclick="toggleChip(this)">🪑 Body / Seat Damage</div>
-            <div class="chip" onclick="toggleChip(this)">🌡️ Overheating</div>
             <div class="chip" onclick="toggleChip(this)">🔊 Noise / Vibration</div>
             <div class="chip" onclick="toggleChip(this)">🔑 Ignition / Won't Start</div>
-            <div class="chip" onclick="toggleChip(this)">🛠️ Mechanical Fault</div>
             <div class="chip" onclick="toggleChip(this)">🧹 Cleaning Required</div>
             <div class="chip" onclick="toggleChip(this)">📊 Dashboard Error</div>
             <div class="chip" onclick="toggleChip(this)">🔌 Charging Port</div>
@@ -677,9 +838,21 @@ textarea{resize:vertical;min-height:90px;line-height:1.5;}
       <div class="field-group">
         <div class="field-group-title">🚦 Priority Level <span class="req">*</span></div>
         <div class="priority-row" id="priority-row">
-          <div class="priority-card" onclick="selectPriority(this,'Low')"><div class="p-icon">🟢</div><div class="p-label">Low</div><div class="p-desc">No urgency</div></div>
-          <div class="priority-card" onclick="selectPriority(this,'Medium')"><div class="p-icon">🟡</div><div class="p-label">Medium</div><div class="p-desc">Needs attention</div></div>
-          <div class="priority-card selected" onclick="selectPriority(this,'High')"><div class="p-icon">🔴</div><div class="p-label">High</div><div class="p-desc">Urgent / Blocking</div></div>
+          <div class="priority-card low-card" onclick="selectPriority(this,'Low')">
+            <div class="p-dot"></div>
+            <div class="p-label">Low</div>
+            <div class="p-desc">No urgency</div>
+          </div>
+          <div class="priority-card med-card" onclick="selectPriority(this,'Medium')">
+            <div class="p-dot"></div>
+            <div class="p-label">Medium</div>
+            <div class="p-desc">Needs attention</div>
+          </div>
+          <div class="priority-card high-card selected selected-high" onclick="selectPriority(this,'High')">
+            <div class="p-dot"></div>
+            <div class="p-label">High</div>
+            <div class="p-desc">Urgent / Blocking</div>
+          </div>
         </div>
       </div>
 
@@ -716,7 +889,6 @@ textarea{resize:vertical;min-height:90px;line-height:1.5;}
       <div class="stat-card amber"><div class="stat-value" id="usr-stat-open">0</div><div class="stat-label">Open</div></div>
       <div class="stat-card amber"><div class="stat-value" id="usr-stat-inprog">0</div><div class="stat-label">In Progress</div></div>
       <div class="stat-card green"><div class="stat-value" id="usr-stat-resolved">0</div><div class="stat-label">Resolved</div></div>
-      <div class="stat-card red"><div class="stat-value" id="usr-stat-high">0</div><div class="stat-label">High Priority</div></div>
       <div class="stat-card blue"><div class="stat-value" id="usr-stat-closed">0</div><div class="stat-label">Closed</div></div>
     </div>
     <div class="filter-bar">
@@ -753,7 +925,6 @@ textarea{resize:vertical;min-height:90px;line-height:1.5;}
       <div class="stat-card amber"><div class="stat-value" id="stat-open">0</div><div class="stat-label">Open</div></div>
       <div class="stat-card amber"><div class="stat-value" id="stat-inprog">0</div><div class="stat-label">In Progress</div></div>
       <div class="stat-card green"><div class="stat-value" id="stat-resolved">0</div><div class="stat-label">Resolved</div></div>
-      <div class="stat-card red"><div class="stat-value" id="stat-high">0</div><div class="stat-label">High Priority</div></div>
       <div class="stat-card blue"><div class="stat-value" id="stat-closed">0</div><div class="stat-label">Closed</div></div>
     </div>
     <div class="section-title">All Service Requests <span>Click any row to view details · manage · update status</span></div>
@@ -787,9 +958,11 @@ textarea{resize:vertical;min-height:90px;line-height:1.5;}
   </div>
   <div class="dash-content">
     <div class="stats-row">
+      <div class="stat-card gold"><div class="stat-value" id="svc-total">0</div><div class="stat-label">Total SRs</div></div>
       <div class="stat-card amber"><div class="stat-value" id="svc-open">0</div><div class="stat-label">Awaiting Action</div></div>
       <div class="stat-card gold"><div class="stat-value" id="svc-inprog">0</div><div class="stat-label">In Progress</div></div>
-      <div class="stat-card green"><div class="stat-value" id="svc-done">0</div><div class="stat-label">Resolved Total</div></div>
+      <div class="stat-card green"><div class="stat-value" id="svc-done">0</div><div class="stat-label">Resolved</div></div>
+      <div class="stat-card blue"><div class="stat-value" id="svc-closed">0</div><div class="stat-label">Closed</div></div>
     </div>
     <div class="section-title">Active Requests</div>
     <div class="filter-bar">
@@ -947,18 +1120,17 @@ service cloud.firestore {
         <button class="save-settings-btn" onclick="saveCredentials()">Update Credentials</button>
       </div>
       <div class="settings-card">
-        <div class="step-badge">CURRENT CREDENTIALS</div>
-        <h3>Default Login Details</h3>
-        <p>Share these with the relevant teams. Change immediately after first login.</p>
-        <div style="font-size:0.82rem;line-height:2;color:var(--slate);">
-          <strong>Reporter (Public):</strong><br>
-          Any name + any email — no password needed<br><br>
-          <strong>Company / Msheireb:</strong><br>
-          Email: <code>admin@msheireb.com</code><br>
-          Password: <code>msheireb2025</code><br><br>
-          <strong>Service Team:</strong><br>
-          Email: <code>tech@service.com</code><br>
-          Password: <code>service2025</code>
+        <div class="step-badge">SECURITY NOTICE</div>
+        <h3>🔒 Credential Management</h3>
+        <p>Login credentials are securely managed via Firebase Authentication.</p>
+        <div style="font-size:0.82rem;line-height:1.8;color:var(--slate);margin-top:10px;">
+          <strong>For password resets or new user accounts:</strong><br>
+          Contact your system administrator or manage users directly in the Firebase Console.<br><br>
+          <strong>Security best practices:</strong><br>
+          • Use strong passwords (12+ characters)<br>
+          • Change passwords every 90 days<br>
+          • Never share credentials via email<br>
+          • Enable 2-factor authentication when available
         </div>
       </div>
     </div>
@@ -985,6 +1157,26 @@ service cloud.firestore {
   </div>
 </div>
 
+<!-- PROOF PHOTO LIGHTBOX -->
+<div id="photo-lightbox" style="display:none;position:fixed;inset:0;z-index:700;background:rgba(0,0,0,0.92);align-items:center;justify-content:center;flex-direction:column;" onclick="document.getElementById('photo-lightbox').style.display='none'">
+  <img id="lightbox-img" style="max-width:92vw;max-height:85vh;object-fit:contain;border-radius:8px;box-shadow:0 24px 80px rgba(0,0,0,0.8);">
+  <div id="lightbox-time" style="color:rgba(255,255,255,0.5);font-size:0.75rem;margin-top:14px;font-family:'DM Mono',monospace;"></div>
+  <div style="color:rgba(255,255,255,0.3);font-size:0.72rem;margin-top:6px;">Click anywhere to close</div>
+</div>
+
+<!-- LOGOUT CONFIRMATION POPUP -->
+<div id="logout-overlay" style="display:none;position:fixed;inset:0;z-index:600;align-items:center;justify-content:center;background:rgba(10,10,10,0.6);backdrop-filter:blur(8px);" onclick="if(event.target===this)hideLogoutConfirm()">
+  <div id="logout-popup" style="background:linear-gradient(160deg,rgba(35,32,28,0.98),rgba(22,20,18,0.98));border:1px solid rgba(201,168,76,0.2);border-radius:14px;padding:32px 28px;width:90%;max-width:320px;box-shadow:0 32px 80px rgba(0,0,0,0.6);text-align:center;">
+    <div style="width:44px;height:44px;background:rgba(185,28,28,0.15);border:1px solid rgba(185,28,28,0.3);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;margin:0 auto 16px;">🔓</div>
+    <div style="font-family:'Cormorant Garamond',serif;font-size:1.35rem;color:var(--white);font-weight:500;margin-bottom:8px;">Sign Out</div>
+    <div style="font-size:0.78rem;color:var(--slate-mid);line-height:1.6;margin-bottom:24px;">Are you sure you want to sign out of the <strong style="color:var(--slate-light);" id="logout-role-label">Staff Portal</strong>?</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <button onclick="hideLogoutConfirm()" style="padding:11px;background:transparent;border:1px solid rgba(255,255,255,0.1);border-radius:8px;font-family:'DM Sans',sans-serif;font-size:0.85rem;color:var(--slate-light);cursor:pointer;transition:all 0.2s;font-weight:500;">Cancel</button>
+      <button onclick="confirmLogout()" style="padding:11px;background:linear-gradient(135deg,#B91C1C,#991B1B);border:none;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:0.85rem;font-weight:700;color:#fff;cursor:pointer;transition:all 0.2s;letter-spacing:0.03em;">Sign Out</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div class="toast" id="toast"></div>
 
@@ -998,8 +1190,16 @@ let CONFIG = {
   emailjs_service: 'msheireb_service',
   company_email: 'roshannathees@gmail.com',
   service_email: 'amalsajeeth@gmail.com',
-  company_pass: 'msheireb2025',
-  service_pass: 'service2025',
+};
+
+// ── USER ROLE MAPPING ──
+// Maps Firebase Auth user emails to their app role.
+// To add a new user: create them in Firebase Console → Authentication, then add their email here.
+const USER_ROLES = {
+  'golfcart@msheireb.com': { role: 'company', name: 'Msheireb Admin' },
+  'tech@service.com':      { role: 'service', name: 'Service Admin' },
+  // Add more authorized users here as needed:
+  // 'newuser@msheireb.com': { role: 'company', name: 'New Admin' },
 };
 
 // Load saved config from localStorage
@@ -1090,43 +1290,232 @@ const sampleData = [
 let selectedRole = 'company';
 function selectRole(r) {
   selectedRole = r;
-  document.querySelectorAll('.login-role-tab').forEach((t,i)=>{
-    t.classList.toggle('active',['company','service'][i]===r);
-  });
-  const f = document.getElementById('login-fields');
-  f.innerHTML = `
-    <div class="login-field"><label>Email</label><input type="email" id="login-email" placeholder="${r==='company'?'admin@msheireb.com':'tech@service.com'}"></div>
-    <div class="login-field"><label>Password</label><input type="password" id="login-pass" placeholder="Enter password"></div>`;
+  document.querySelectorAll('.login-role-tab').forEach(t => t.classList.remove('active'));
+  const idx = r === 'company' ? 0 : 1;
+  document.querySelectorAll('.login-role-tab')[idx]?.classList.add('active');
   document.getElementById('login-error').style.display = 'none';
+  document.getElementById('login-email').value = '';
+  document.getElementById('login-pass').value = '';
+  document.getElementById('login-email').focus();
 }
-selectRole('company');
 
 // Show staff login modal
 function showStaffLogin() {
-  document.getElementById('login-screen').classList.add('show');
+  const btn = document.getElementById('staff-login-btn');
+  btn.style.animation = 'none';
+  btn.offsetHeight;
+  btn.style.animation = 'staffBtnPulse 0.5s ease';
+  setTimeout(()=>{ btn.style.animation = ''; }, 500);
+
+  const screen = document.getElementById('login-screen');
+  screen.classList.remove('hiding');
+  screen.classList.add('show');
+  setTimeout(()=>document.getElementById('login-email')?.focus(), 420);
 }
 // Hide staff login modal
 function closeStaffLogin() {
-  document.getElementById('login-screen').classList.remove('show');
+  const screen = document.getElementById('login-screen');
+  screen.classList.add('hiding');
+  setTimeout(()=>{
+    screen.classList.remove('show','hiding');
+    document.getElementById('login-email').value = '';
+    document.getElementById('login-pass').value = '';
+    document.getElementById('login-error').style.display = 'none';
+  }, 220);
 }
 
-function doLogin() {
+async function doLogin() {
   const err = document.getElementById('login-error');
+  const btn = document.getElementById('login-btn');
   err.style.display = 'none';
-  if (selectedRole === 'company') {
-    const email = document.getElementById('login-email')?.value.trim();
-    const pass = document.getElementById('login-pass')?.value;
-    if (email === 'admin@msheireb.com' && pass === CONFIG.company_pass) {
-      currentUser = {name:'Msheireb Admin', email, role:'company'};
-      completeLogin('company');
-    } else { err.textContent='Incorrect credentials.'; err.style.display='block'; }
-  } else {
-    const email = document.getElementById('login-email')?.value.trim();
-    const pass = document.getElementById('login-pass')?.value;
-    if (email === 'tech@service.com' && pass === CONFIG.service_pass) {
-      currentUser = {name:'Service Admin', email, role:'service'};
-      completeLogin('service');
-    } else { err.textContent='Incorrect credentials.'; err.style.display='block'; }
+  const email = document.getElementById('login-email')?.value.trim().toLowerCase();
+  const pass = document.getElementById('login-pass')?.value;
+
+  if (!email || !pass) {
+    err.textContent = 'Please enter both email and password.';
+    err.style.display = 'block';
+    return;
+  }
+
+  // Check Firebase is ready
+  if (!window._firebaseReady || !window._auth) {
+    err.textContent = 'Authentication service unavailable. Please try again.';
+    err.style.display = 'block';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loading-spinner"></span>Authenticating…';
+
+  try {
+    const { signInWithEmailAndPassword } = window._authModules;
+    const cred = await signInWithEmailAndPassword(window._auth, email, pass);
+    const fbUser = cred.user;
+
+    // Look up user's role from the mapping (auto-detect — no tab selection needed)
+    const userInfo = USER_ROLES[fbUser.email];
+    if (!userInfo) {
+      // Authenticated but not authorized for any role
+      const { signOut } = window._authModules;
+      await signOut(window._auth);
+      err.textContent = 'Account not authorized for portal access. Contact administrator.';
+      err.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Sign In';
+      return;
+    }
+
+    // Validate selected tab matches account role
+    if (userInfo.role !== selectedRole) {
+      const { signOut } = window._authModules;
+      await signOut(window._auth);
+      err.textContent = `This account belongs to ${userInfo.role === 'company' ? '🏢 Company' : '🔧 Service Team'}. Please select the correct tab.`;
+      err.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = 'Sign In';
+      return;
+    }
+
+    currentUser = { name: userInfo.name, email: fbUser.email, role: userInfo.role, uid: fbUser.uid };
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+    completeLogin(userInfo.role);
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+    // Friendly error messages
+    const code = e.code || '';
+    let msg = 'Incorrect credentials.';
+    if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') msg = 'Incorrect email or password.';
+    else if (code === 'auth/too-many-requests') msg = 'Too many failed attempts. Try again later or reset password.';
+    else if (code === 'auth/invalid-email') msg = 'Invalid email format.';
+    else if (code === 'auth/user-disabled') msg = 'This account has been disabled.';
+    else if (code === 'auth/network-request-failed') msg = 'Network error. Check your connection.';
+    err.textContent = msg;
+    err.style.display = 'block';
+    console.warn('Login error:', e);
+  }
+}
+
+// ── PROOF PHOTO ──
+let _proofPhotoData = null; // base64 string of selected photo
+
+function handleProofPhoto(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) {
+    showToast('⚠ Photo too large — max 2MB. Please compress and try again.');
+    input.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    _proofPhotoData = e.target.result;
+    document.getElementById('proof-photo-img').src = _proofPhotoData;
+    document.getElementById('proof-photo-name').textContent = file.name + ' · ' + (file.size/1024).toFixed(0) + 'KB';
+    document.getElementById('proof-photo-upload-area') && (document.getElementById('photo-upload-area').style.display = 'none');
+    document.getElementById('photo-upload-area').style.display = 'none';
+    document.getElementById('proof-photo-preview').style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearProofPhoto() {
+  _proofPhotoData = null;
+  document.getElementById('proof-photo-input').value = '';
+  document.getElementById('proof-photo-preview').style.display = 'none';
+  document.getElementById('photo-upload-area').style.display = 'block';
+}
+
+function viewProofPhoto(srId, idx) {
+  const sr = srData.find(s=>s.id===srId);
+  if (!sr || !sr.proofPhotos || !sr.proofPhotos[idx]) return;
+  const lb = document.getElementById('photo-lightbox');
+  document.getElementById('lightbox-img').src = sr.proofPhotos[idx].data;
+  document.getElementById('lightbox-time').textContent = 'Attached: ' + sr.proofPhotos[idx].time;
+  lb.style.display = 'flex';
+}
+
+// ── LOGOUT CONFIRMATION ──
+function showLogoutConfirm() {
+  const overlay = document.getElementById('logout-overlay');
+  const popup = document.getElementById('logout-popup');
+  const label = document.getElementById('logout-role-label');
+  label.textContent = currentRole === 'company' ? 'MP Admin Portal' : 'Service Team Portal';
+  overlay.style.display = 'flex';
+  // Re-trigger animation
+  popup.style.animation = 'none';
+  popup.offsetHeight;
+  popup.style.animation = 'popIn 0.32s cubic-bezier(0.34,1.56,0.64,1) forwards';
+}
+function hideLogoutConfirm() {
+  document.getElementById('logout-overlay').style.display = 'none';
+}
+async function confirmLogout() {
+  hideLogoutConfirm();
+  await logout();
+}
+function showForgotPassword() {
+  const popup = document.getElementById('forgot-popup');
+  const inner = popup.querySelector('.forgot-popup-inner');
+  popup.style.display = 'flex';
+  popup.style.background = 'rgba(10,10,10,0.82)';
+  // Reset animation so it plays fresh every time
+  inner.style.animation = 'none';
+  inner.offsetHeight; // force reflow
+  inner.style.animation = 'popIn 0.35s cubic-bezier(0.34,1.56,0.64,1) forwards';
+  document.getElementById('forgot-email').value = '';
+  document.getElementById('forgot-msg').style.display = 'none';
+  setTimeout(()=>document.getElementById('forgot-email').focus(), 150);
+}
+function hideForgotPassword() {
+  document.getElementById('forgot-popup').style.display = 'none';
+}
+async function submitForgotPassword() {
+  const email = document.getElementById('forgot-email').value.trim().toLowerCase();
+  const msg = document.getElementById('forgot-msg');
+  if (!email) {
+    msg.textContent = 'Please enter your email address.';
+    msg.style.color = '#FCA5A5';
+    msg.style.display = 'block';
+    return;
+  }
+  // Check against authorised user list first
+  if (!USER_ROLES[email]) {
+    msg.textContent = '⚠ This email is not registered in the portal.';
+    msg.style.color = '#FCA5A5';
+    msg.style.background = 'rgba(185,28,28,0.12)';
+    msg.style.border = '1px solid rgba(185,28,28,0.25)';
+    msg.style.display = 'block';
+    return;
+  }
+  if (!window._firebaseReady || !window._auth) {
+    msg.textContent = 'Service unavailable. Try again later.';
+    msg.style.color = '#FCA5A5';
+    msg.style.background = 'rgba(185,28,28,0.12)';
+    msg.style.border = '1px solid rgba(185,28,28,0.25)';
+    msg.style.display = 'block';
+    return;
+  }
+  try {
+    const { sendPasswordResetEmail } = window._authModules;
+    await sendPasswordResetEmail(window._auth, email);
+    msg.textContent = '✓ Reset link sent — check your inbox.';
+    msg.style.color = '#6EE7B7';
+    msg.style.background = 'rgba(46,125,94,0.12)';
+    msg.style.border = '1px solid rgba(46,125,94,0.25)';
+    msg.style.display = 'block';
+    setTimeout(()=>hideForgotPassword(), 3000);
+  } catch(e) {
+    const code = e.code || '';
+    let m = 'Could not send reset email.';
+    if (code === 'auth/user-not-found' || code === 'auth/invalid-email') m = '⚠ No account found for this email.';
+    else if (code === 'auth/too-many-requests') m = '⚠ Too many requests. Try again later.';
+    msg.textContent = m;
+    msg.style.color = '#FCA5A5';
+    msg.style.background = 'rgba(185,28,28,0.12)';
+    msg.style.border = '1px solid rgba(185,28,28,0.25)';
+    msg.style.display = 'block';
   }
 }
 
@@ -1151,7 +1540,14 @@ function completeLogin(role) {
   if (window._firebaseReady) initFirebaseListener();
 }
 
-function logout() {
+async function logout() {
+  // Sign out of Firebase Auth if connected
+  if (window._firebaseReady && window._auth && window._authModules) {
+    try {
+      const { signOut } = window._authModules;
+      await signOut(window._auth);
+    } catch(e) { console.warn('Sign out error:', e); }
+  }
   currentRole = 'public';
   currentUser = null;
   document.getElementById('login-screen').classList.remove('show');
@@ -1160,7 +1556,7 @@ function logout() {
   document.getElementById('nav-tabs').innerHTML = '';
   document.getElementById('mobile-nav').innerHTML = '';
   showPage('page-sr-form');
-  selectRole('company');
+  selectedRole = 'company';
 }
 
 function buildNavTabs(role) {
@@ -1265,7 +1661,6 @@ function selectPriority(el, val) {
   if(val==='High') el.classList.add('selected-high');
   selectedPriority = val;
 }
-
 async function submitSR() {
   const name  = document.getElementById('rep-name').value.trim();
   const email = document.getElementById('rep-email').value.trim();
@@ -1338,7 +1733,8 @@ function resetForm() {
     .forEach(id=>document.getElementById(id).value='');
 
   document.querySelectorAll('.chip.selected').forEach(c=>c.classList.remove('selected'));
-  const hCard = document.querySelector('.priority-card:last-child'); if(hCard){hCard.classList.add('selected','selected-high'); selectedPriority='High';}
+  const hCard = document.querySelector('.priority-card.high-card');
+  if(hCard){ hCard.classList.add('selected','selected-high'); selectedPriority='High'; }
   document.getElementById('form-section').style.display='block';
   document.getElementById('success-screen').classList.remove('show');
 }
@@ -1366,6 +1762,7 @@ function updateStats(userSRs) {
   setEl('stat-open',   all.filter(s=>s.status==='Open').length);
   setEl('stat-inprog', all.filter(s=>s.status==='In Progress').length);
   setEl('stat-resolved',all.filter(s=>s.status==='Resolved').length);
+  setEl('stat-closed', all.filter(s=>s.status==='Closed').length);
   setEl('stat-high',   all.filter(s=>s.priority==='High').length);
   setEl('stat-closed', all.filter(s=>s.status==='Closed').length);
   // User dashboard stats (same as company - all SRs)
@@ -1373,12 +1770,15 @@ function updateStats(userSRs) {
   setEl('usr-stat-open',    all.filter(s=>s.status==='Open').length);
   setEl('usr-stat-inprog',  all.filter(s=>s.status==='In Progress').length);
   setEl('usr-stat-resolved',all.filter(s=>s.status==='Resolved').length);
+  setEl('usr-stat-closed',  all.filter(s=>s.status==='Closed').length);
   setEl('usr-stat-high',    all.filter(s=>s.priority==='High').length);
   setEl('usr-stat-closed',  all.filter(s=>s.status==='Closed').length);
   // Service stats
+  setEl('svc-total',   all.length);
   setEl('svc-open',    all.filter(s=>s.status==='Open').length);
   setEl('svc-inprog',  all.filter(s=>s.status==='In Progress').length);
-  setEl('svc-done',    all.filter(s=>s.status==='Resolved'||s.status==='Closed').length);
+  setEl('svc-done',    all.filter(s=>s.status==='Resolved').length);
+  setEl('svc-closed',  all.filter(s=>s.status==='Closed').length);
 }
 function setEl(id,val){const e=document.getElementById(id);if(e)e.textContent=val;}
 
@@ -1483,14 +1883,32 @@ function openModal(srId, view) {
       <div class="field">
         <label>Change Status</label>
         <select id="modal-assign" style="display:none"></select>
-        <select id="modal-status">
+        <select id="modal-status" style="appearance:none;-webkit-appearance:none;background-image:url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2216%22 height=%2216%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236B6B6B%22 stroke-width=%222%22><polyline points=%226 9 12 15 18 9%22/></svg>');background-repeat:no-repeat;background-position:right 14px center;padding-right:40px;font-weight:600;cursor:pointer;">
           <option ${sr.status==='Open'?'selected':''}>Open</option>
           <option ${sr.status==='In Progress'?'selected':''}>In Progress</option>
           <option ${sr.status==='Resolved'?'selected':''}>Resolved</option>
+          <option ${sr.status==='Closed'?'selected':''}>Closed</option>
         </select>
       </div>
       <div class="field"><label>Update Note (included in email)</label>
         <textarea id="modal-note" placeholder="e.g. Technician on the way. ETA 20 mins." style="min-height:64px;"></textarea>
+      </div>
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:6px;">
+          📎 Proof / Completion Photo
+          <span style="font-size:0.68rem;font-weight:400;color:var(--slate-light);text-transform:none;letter-spacing:0;">(not sent in email · visible to staff only)</span>
+        </label>
+        <div id="photo-upload-area" onclick="document.getElementById('proof-photo-input').click()" style="margin-top:8px;border:2px dashed #E5E0D8;border-radius:10px;padding:20px;text-align:center;cursor:pointer;background:var(--parchment);transition:all 0.2s;" onmouseover="this.style.borderColor='var(--gold)';this.style.background='rgba(201,168,76,0.04)'" onmouseout="this.style.borderColor='#E5E0D8';this.style.background='var(--parchment)'">
+          <div style="font-size:1.6rem;margin-bottom:6px;">📷</div>
+          <div style="font-size:0.8rem;font-weight:600;color:var(--slate);">Click to attach photo</div>
+          <div style="font-size:0.72rem;color:var(--slate-light);margin-top:3px;">Or use camera · JPG, PNG · Max 2MB</div>
+        </div>
+        <input type="file" id="proof-photo-input" accept="image/*" capture="environment" style="display:none" onchange="handleProofPhoto(this)">
+        <div id="proof-photo-preview" style="display:none;margin-top:10px;position:relative;">
+          <img id="proof-photo-img" style="width:100%;max-height:200px;object-fit:cover;border-radius:8px;border:1px solid var(--border);">
+          <button onclick="clearProofPhoto()" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,0.6);border:none;border-radius:50%;width:24px;height:24px;color:#fff;font-size:0.75rem;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+          <div id="proof-photo-name" style="font-size:0.72rem;color:var(--slate-mid);margin-top:5px;text-align:center;"></div>
+        </div>
       </div>
       <div class="update-row">
         <button class="action-btn primary" onclick="updateSR('${srId}')" style="flex:1;padding:11px;font-size:0.85rem;">
@@ -1516,6 +1934,16 @@ function openModal(srId, view) {
     <div class="divider"></div>
     <div class="field"><label>Description</label><p style="font-size:0.87rem;line-height:1.65;color:var(--slate);margin-top:6px;">${sr.desc}</p></div>
     ${sr.notes?`<div class="field" style="margin-top:12px;"><label>Additional Notes</label><p style="font-size:0.84rem;color:var(--slate-mid);">${sr.notes}</p></div>`:''}
+    ${sr.proofPhotos && sr.proofPhotos.length ? `
+    <div class="divider"></div>
+    <div class="section-title" style="margin-bottom:10px;">📎 Proof Photos <span>${sr.proofPhotos.length} attachment${sr.proofPhotos.length>1?'s':''} · Staff only</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:4px;">
+      ${sr.proofPhotos.map((p,i)=>`
+        <div style="position:relative;cursor:pointer;" onclick="viewProofPhoto('${srId}',${i})">
+          <img src="${p.data}" style="width:100%;height:120px;object-fit:cover;border-radius:8px;border:1px solid var(--border);transition:all 0.2s;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">
+          <div style="font-size:0.65rem;color:var(--slate-mid);margin-top:4px;text-align:center;">${p.time}</div>
+        </div>`).join('')}
+    </div>` : ''}
     <div class="divider"></div>
     <div class="section-title" style="margin-bottom:10px;">Activity Log <span>${sr.logs.filter(l=>l.type!=='blue').length} events</span></div>
     <div class="sr-table" style="margin-bottom:16px;">
@@ -1532,7 +1960,10 @@ function openModal(srId, view) {
   document.getElementById('modal-overlay').classList.add('open');
 }
 
-function closeModal() { document.getElementById('modal-overlay').classList.remove('open'); }
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+  _proofPhotoData = null;
+}
 function closeModalOutside(e) { if(e.target===document.getElementById('modal-overlay')) closeModal(); }
 
 async function updateSR(srId) {
@@ -1546,6 +1977,14 @@ async function updateSR(srId) {
   sr.status = newStatus;
   sr.assignedTo = assigned;
   sr.lastUpdate = now;
+
+  // Save proof photo if attached
+  if (_proofPhotoData) {
+    if (!sr.proofPhotos) sr.proofPhotos = [];
+    sr.proofPhotos.push({ data: _proofPhotoData, time: now, addedBy: currentUser?.name || 'Staff' });
+    _proofPhotoData = null;
+    sr.logs.push({time:now,type:'gold',msg:`<strong>Proof photo attached</strong> by ${currentUser?.name||'Staff'}`});
+  }
   const emailParams = {
     sr_id:srId, reporter:sr.name, email:sr.email, cart_id:sr.cartId,
     location:sr.location, issues:sr.issues.join(', '), priority:sr.priority,
@@ -1695,45 +2134,85 @@ function exportCSV() {
 // ── EXPORT EXCEL ──
 function exportExcel() {
   try {
-    const headers = ['SR Number','Reporter','Email','Phone','Cart ID','Issues','Priority','Status','Description','Submitted','Last Update'];
+    // ── Sheet 1: All Service Requests (full data) ──
+    const headers = [
+      'SR Number','Reporter','Email','Phone',
+      'Cart ID','Location','Issues','Priority','Status',
+      'Assigned To','Description','Notes',
+      'Submitted','Last Update','Proof Photos'
+    ];
     const rows = srData.map(s=>[
-      s.id, s.name, s.email, s.phone, s.cartId,
-      s.issues.join('; '), s.priority, s.status, s.desc,
-      s.submitted, s.lastUpdate
+      s.id, s.name, s.email, s.phone,
+      s.cartId, s.location||'', s.issues.join('; '), s.priority, s.status,
+      s.assignedTo||'', s.desc, s.notes||'',
+      s.submitted, s.lastUpdate,
+      s.proofPhotos && s.proofPhotos.length ? `${s.proofPhotos.length} photo(s) attached` : 'None'
     ]);
     const wsData = [headers, ...rows];
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-    // Column widths
     ws['!cols'] = [
-      {wch:16},{wch:22},{wch:28},{wch:16},{wch:12},
-      {wch:30},{wch:10},{wch:14},{wch:40},
-      {wch:18},{wch:18}
+      {wch:16},{wch:22},{wch:30},{wch:16},
+      {wch:12},{wch:26},{wch:34},{wch:10},{wch:14},
+      {wch:20},{wch:44},{wch:24},
+      {wch:18},{wch:18},{wch:20}
     ];
-    // Style header row
+    // Freeze header row
+    ws['!freeze'] = {xSplit:0, ySplit:1};
+    // Style header row with gold background
     headers.forEach((_,i)=>{
       const cell = ws[XLSX.utils.encode_cell({r:0,c:i})];
+      if(cell) cell.s = {font:{bold:true,color:{rgb:'0D0D0D'}},fill:{fgColor:{rgb:'C9A84C'}},alignment:{horizontal:'center'}};
+    });
+
+    // ── Sheet 2: Activity Log (all logs from all SRs) ──
+    const logHeaders = ['SR Number','Cart ID','Reporter','Event','Timestamp'];
+    const logRows = srData.flatMap(s =>
+      (s.logs||[])
+        .filter(l=>l.type!=='blue')
+        .map(l=>[
+          s.id, s.cartId, s.name,
+          l.msg.replace(/<[^>]+>/g,''), // strip HTML tags
+          l.time
+        ])
+    );
+    const wsLog = XLSX.utils.aoa_to_sheet([logHeaders, ...logRows]);
+    wsLog['!cols'] = [{wch:16},{wch:12},{wch:22},{wch:60},{wch:18}];
+    logHeaders.forEach((_,i)=>{
+      const cell = wsLog[XLSX.utils.encode_cell({r:0,c:i})];
       if(cell) cell.s = {font:{bold:true},fill:{fgColor:{rgb:'C9A84C'}}};
     });
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Service Requests');
-    // Add summary sheet
+
+    // ── Sheet 3: Summary ──
+    const today = new Date().toLocaleString('en-GB');
     const summary = [
       ['Msheireb Properties – Golf Cart Service Report'],
-      ['Generated:', new Date().toLocaleString()],
+      ['Generated:', today],
       [''],
-      ['SUMMARY'],
-      ['Total SRs', srData.length],
-      ['Open', srData.filter(s=>s.status==='Open').length],
-      ['In Progress', srData.filter(s=>s.status==='In Progress').length],
-      ['Resolved', srData.filter(s=>s.status==='Resolved').length],
-      ['Closed', srData.filter(s=>s.status==='Closed').length],
-      ['High Priority', srData.filter(s=>s.priority==='High').length],
+      ['── STATUS SUMMARY ──'],
+      ['Total SRs',    srData.length],
+      ['Open',         srData.filter(s=>s.status==='Open').length],
+      ['In Progress',  srData.filter(s=>s.status==='In Progress').length],
+      ['Resolved',     srData.filter(s=>s.status==='Resolved').length],
+      ['Closed',       srData.filter(s=>s.status==='Closed').length],
+      [''],
+      ['── PRIORITY SUMMARY ──'],
+      ['High Priority',   srData.filter(s=>s.priority==='High').length],
+      ['Medium Priority', srData.filter(s=>s.priority==='Medium').length],
+      ['Low Priority',    srData.filter(s=>s.priority==='Low').length],
+      [''],
+      ['── PROOF PHOTOS ──'],
+      ['SRs with photos attached', srData.filter(s=>s.proofPhotos&&s.proofPhotos.length).length],
+      ['Total photos across all SRs', srData.reduce((acc,s)=>acc+(s.proofPhotos?s.proofPhotos.length:0),0)],
     ];
     const ws2 = XLSX.utils.aoa_to_sheet(summary);
-    ws2['!cols'] = [{wch:20},{wch:20}];
+    ws2['!cols'] = [{wch:30},{wch:20}];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Service Requests');
+    XLSX.utils.book_append_sheet(wb, wsLog, 'Activity Log');
     XLSX.utils.book_append_sheet(wb, ws2, 'Summary');
-    XLSX.writeFile(wb, `Msheireb-Golf-Cart-SR-Report-${new Date().toISOString().slice(0,10)}.xlsx`);
-    showToast('✓ Excel report downloaded');
+    XLSX.writeFile(wb, `Msheireb-Golf-Cart-SR-${new Date().toISOString().slice(0,10)}.xlsx`);
+    showToast('✓ Excel report downloaded — 3 sheets included');
   } catch(e) {
     showToast('⚠ Excel export failed: '+e.message);
   }
@@ -1949,13 +2428,46 @@ function saveFirebaseConfig() {
   localStorage.setItem('sr_config', JSON.stringify(CONFIG));
   showToast('✓ Firebase config saved — reload to connect');
 }
-function saveCredentials() {
+async function saveCredentials() {
   const cp = document.getElementById('cfg-company-pass').value;
   const sp = document.getElementById('cfg-service-pass').value;
-  if (cp) CONFIG.company_pass = cp;
-  if (sp) CONFIG.service_pass = sp;
-  localStorage.setItem('sr_config', JSON.stringify(CONFIG));
-  showToast('✓ Credentials updated');
+
+  if (!cp && !sp) {
+    showToast('⚠ Enter a new password to update.');
+    return;
+  }
+  if (!currentUser || !window._firebaseReady || !window._auth) {
+    showToast('⚠ You must be logged in to change passwords.');
+    return;
+  }
+
+  // Determine which password applies to the currently logged-in user
+  const newPass = currentUser.role === 'company' ? cp : sp;
+  if (!newPass) {
+    showToast(`⚠ Enter the new ${currentUser.role === 'company' ? 'Company' : 'Service Team'} password (you can only change your own account).`);
+    return;
+  }
+  if (newPass.length < 6) {
+    showToast('⚠ Password must be at least 6 characters.');
+    return;
+  }
+
+  try {
+    // Dynamic import to update password on the live Firebase Auth user
+    const { updatePassword } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js');
+    await updatePassword(window._auth.currentUser, newPass);
+    document.getElementById('cfg-company-pass').value = '';
+    document.getElementById('cfg-service-pass').value = '';
+    showToast('✓ Your password has been updated in Firebase.');
+  } catch(e) {
+    const code = e.code || '';
+    if (code === 'auth/requires-recent-login') {
+      showToast('⚠ Please log out and log back in, then try again.');
+    } else {
+      showToast('⚠ Password update failed: ' + (code || e.message));
+    }
+    console.warn('Password change error:', e);
+  }
 }
 async function testEmail() {
   showToast('Sending test email…');
@@ -2008,7 +2520,11 @@ window.addEventListener('load', () => {
 
 // keyboard shortcut: Enter to login
 document.addEventListener('keydown', e=>{
-  if (e.key==='Enter' && document.getElementById('login-screen').classList.contains('show')) doLogin();
+  if (e.key==='Enter' && document.getElementById('login-screen').classList.contains('show')) {
+    const popup = document.getElementById('forgot-popup');
+    if (popup && popup.style.display === 'flex') submitForgotPassword();
+    else doLogin();
+  }
 });
 </script>
 </body>
